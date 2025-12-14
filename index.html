@@ -2,38 +2,13 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <!-- 必须添加 viewport meta 以确保移动端比例正确 -->
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>浅水波方程演示</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <style>
-        :root {
-            --sidebar-width: 320px;
-        }
-
-        body { 
-            margin: 0; padding: 0; 
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
-            background-color: #f0f2f5; 
-            display: flex; 
-            height: 100vh; width: 100vw;
-            overflow: hidden; 
-            /* 禁止移动端默认的触摸行为，防止滚动干扰 */
-            touch-action: none; 
-        }
+        body { margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f0f2f5; display: flex; height: 100vh; overflow: hidden; }
         
         /* 侧边栏 */
-        #sidebar { 
-            width: var(--sidebar-width); 
-            background-color: #2c3e50; 
-            color: white; 
-            padding: 15px; 
-            display: flex; 
-            flex-direction: column; 
-            box-shadow: 2px 0 5px rgba(0,0,0,0.1); 
-            z-index: 10; 
-            position: relative; 
-            overflow-y: auto; /* 允许侧边栏内容过多时滚动 */
-        }
+        #sidebar { width: 320px; background-color: #2c3e50; color: white; padding: 15px; display: flex; flex-direction: column; box-shadow: 2px 0 5px rgba(0,0,0,0.1); z-index: 10; position: relative; }
         h2 { margin-top: 0; font-size: 1.1rem; border-bottom: 1px solid #34495e; padding-bottom: 8px; margin-bottom: 12px; }
         .control-group { margin-bottom: 10px; }
         label { display: block; margin-bottom: 4px; font-size: 0.85rem; color: #bdc3c7; }
@@ -62,48 +37,65 @@
         @keyframes shake { 10%, 90% { transform: translate3d(-1px, 0, 0); } 20%, 80% { transform: translate3d(2px, 0, 0); } 30%, 50%, 70% { transform: translate3d(-4px, 0, 0); } 40%, 60% { transform: translate3d(4px, 0, 0); } }
 
         /* 主界面 */
-        #main-area { flex: 1; padding: 15px; display: flex; flex-direction: column; position: relative; height: 100%; box-sizing: border-box; }
+        #main-area { flex: 1; padding: 15px; display: flex; flex-direction: column; position: relative; }
         #canvas-container { flex: 1; background: white; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); position: relative; overflow: hidden; }
         canvas { width: 100%; height: 100%; display: block; }
         #status-bar { margin-top: 10px; padding: 8px 15px; background: white; border-radius: 4px; display: flex; justify-content: space-between; font-family: monospace; font-size: 0.9rem; color: #2c3e50; border-left: 5px solid #f39c12; }
 
-        /* ========================================= */
-        /* 移动端强制横屏核心逻辑 (Mobile Force Landscape) */
-        /* ========================================= */
-        @media screen and (orientation: portrait) and (max-width: 900px) {
-            body {
-                /* 交换宽和高 */
-                width: 100vh;
-                height: 100vw;
-                
-                /* 绝对定位并旋转 */
-                position: absolute;
-                top: 0;
-                left: 100vw; /* 将原点移到屏幕右上角 */
-                
-                /* 旋转90度 */
-                transform: rotate(90deg);
-                transform-origin: 0% 0%; /* 以左上角为轴旋转 */
-            }
-
-            /* 调整手机端侧边栏宽度，因为手机“高”（现在的宽）有限 */
-            :root {
-                --sidebar-width: 240px; 
-            }
-
-            /* 稍微缩小一点字体和间距以适应手机屏幕 */
-            #sidebar { padding: 10px; }
-            h2 { font-size: 1rem; margin-bottom: 8px; }
-            .control-group { margin-bottom: 6px; }
-            button { padding: 8px; }
-            #status-bar { font-size: 0.75rem; padding: 5px 10px; }
-            
-            /* 手机端可能不需要那么大的边距 */
-            #main-area { padding: 10px; }
+        /* ===== 新增：手机端横屏提示 ===== */
+        #orientation-overlay {
+            display: none; /* 默认隐藏 */
+            position: fixed;
+            top: 0; left: 0;
+            width: 100vw; height: 100vh;
+            background-color: rgba(44, 62, 80, 0.98); /* 使用侧边栏主题色 */
+            color: white;
+            z-index: 2000; /* 最高层级 */
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+            text-align: center;
         }
+        .phone-icon {
+            width: 50px;
+            height: 100px;
+            border: 3px solid white;
+            border-radius: 10px;
+            margin-bottom: 25px;
+            animation: rotate-animation 1.8s ease-in-out infinite;
+            position: relative;
+        }
+        .phone-icon::before {
+            content: '';
+            position: absolute;
+            width: 20px;
+            height: 4px;
+            background: white;
+            border-radius: 2px;
+            top: 8px;
+            left: 50%;
+            transform: translateX(-50%);
+        }
+        #orientation-overlay p {
+            font-size: 1.1rem;
+            max-width: 80%;
+        }
+        @keyframes rotate-animation {
+            0%   { transform: rotate(0deg); }
+            50%  { transform: rotate(-90deg); }
+            100% { transform: rotate(-90deg); }
+        }
+        /* ================================== */
     </style>
 </head>
 <body>
+
+    <!-- ===== 新增：横屏提示的 HTML 结构 ===== -->
+    <div id="orientation-overlay">
+        <div class="phone-icon"></div>
+        <p>为了获得最佳体验，请将您的设备旋转至横屏模式。</p>
+    </div>
+    <!-- ======================================= -->
 
     <div id="sidebar">
         <h2>计算核心配置</h2>
@@ -123,6 +115,7 @@
                 <span class="slider"></span>
             </label>
         </div>
+        <!-- 已移除提示文字 -->
 
         <h2>物理参数</h2>
         <div class="grid-2-col">
@@ -273,20 +266,13 @@
         function resizeCanvas() {
             const dpr = window.devicePixelRatio || 1;
             const parent = canvas.parentElement;
-            
-            // 重要：在这里我们延迟一点点获取尺寸，确保CSS旋转已经完成
-            // 否则在旋转瞬间获取的尺寸可能是错的
-            setTimeout(() => {
-                canvas.width = parent.clientWidth * dpr;
-                canvas.height = parent.clientHeight * dpr;
-                if (solvers.length > 0) draw(); 
-            }, 50);
+            canvas.width = parent.clientWidth * dpr;
+            canvas.height = parent.clientHeight * dpr;
+            ctx.scale(dpr, dpr);
+            if (solvers.length > 0) draw(); 
         }
 
-        // 监听普通的 resize 事件
         window.addEventListener('resize', resizeCanvas);
-        // 额外监听 orientationchange 事件，确保手机旋转时重绘
-        window.addEventListener('orientationchange', resizeCanvas);
 
         function getDataBounds() {
             let maxH = 0, maxU = 0;
@@ -313,57 +299,44 @@
 
         function draw() {
             if (solvers.length === 0) return;
-            // 获取 CSS 布局尺寸 (CSS pixels)
-            const w = canvas.width / (window.devicePixelRatio || 1); 
-            const h = canvas.height / (window.devicePixelRatio || 1);
-            
             const dpr = window.devicePixelRatio || 1;
-            ctx.save();
-            ctx.scale(dpr, dpr); // 缩放绘图环境以匹配高分屏
+            const w = canvas.width / dpr;
+            const h = canvas.height / dpr;
             
-            ctx.clearRect(0, 0, w, h); 
+            ctx.clearRect(0, 0, w, h);
+            
+            const padLeft = 60, padRight = 60, padTop = 30, padBottom = 40;
+            const drawW = w - padLeft - padRight; const drawH = h - padTop - padBottom;
 
-            // 稍微缩小边距以适应移动端可能的紧凑布局
-            const isMobile = w < 600 || h < 400;
-            const padLeft = 40, padRight = 30, padTop = 30, padBottom = 30;
-            
-            const drawW = w - padLeft - padRight; 
-            const drawH = h - padTop - padBottom;
-            
+            ctx.lineWidth = 1; ctx.font = '12px Arial'; ctx.textBaseline = 'middle';
             const bounds = getDataBounds();
             const axisH = calculateAxisConfig(bounds.maxH);
             const axisU = calculateAxisConfig(bounds.maxU);
 
-            ctx.lineWidth = 1; ctx.font = isMobile ? '10px Arial' : '12px Arial'; ctx.textBaseline = 'middle';
-            
-            // Y Axis Grid (H)
             for(let i=0; i<=axisH.max/axisH.step; i++) {
                 let val = i * axisH.step; let y = padTop + drawH - (val / axisH.max) * drawH;
                 ctx.beginPath(); ctx.strokeStyle = '#ecf0f1'; ctx.moveTo(padLeft, y); ctx.lineTo(w-padRight, y); ctx.stroke();
-                ctx.textAlign = 'right'; ctx.fillStyle = '#2980b9'; ctx.fillText(val.toFixed(0), padLeft - 6, y);
+                ctx.textAlign = 'right'; ctx.fillStyle = '#2980b9'; ctx.fillText(val.toFixed(0), padLeft - 10, y);
             }
             ctx.beginPath(); ctx.strokeStyle = '#2980b9'; ctx.lineWidth = 2; ctx.moveTo(padLeft, padTop); ctx.lineTo(padLeft, padTop+drawH); ctx.stroke();
             
-            // Y Axis Grid (U - Right side)
             for(let i=0; i<=axisU.max/axisU.step; i++) {
                 let val = i * axisU.step; let y = padTop + drawH - (val / axisU.max) * drawH;
-                ctx.beginPath(); ctx.strokeStyle = '#c0392b'; ctx.lineWidth = 1; ctx.moveTo(w-padRight, y); ctx.lineTo(w-padRight+6, y); ctx.stroke();
-                ctx.textAlign = 'left'; ctx.fillStyle = '#c0392b'; ctx.fillText(val.toFixed(0), w-padRight+6, y);
+                ctx.beginPath(); ctx.strokeStyle = '#e74c3c'; ctx.lineWidth = 0.5; ctx.moveTo(padLeft, y); ctx.lineTo(w-padRight, y); ctx.stroke();
+                ctx.textAlign = 'left'; ctx.fillStyle = '#c0392b'; ctx.fillText(val.toFixed(0), w-padRight+10, y);
             }
             ctx.beginPath(); ctx.strokeStyle = '#c0392b'; ctx.lineWidth = 2; ctx.moveTo(w-padRight, padTop); ctx.lineTo(w-padRight, padTop+drawH); ctx.stroke();
 
-            // X Axis
             ctx.beginPath(); ctx.strokeStyle = '#7f8c8d'; ctx.lineWidth = 1; ctx.moveTo(padLeft, padTop+drawH); ctx.lineTo(w-padRight, padTop+drawH); ctx.stroke();
             ctx.textAlign = 'center'; ctx.fillStyle = '#7f8c8d';
-            ctx.fillText("Position (m)", padLeft+drawW/2, h-10); ctx.fillText("0", padLeft, h-15); ctx.fillText(parseFloat(document.getElementById('input-L').value).toFixed(1), w-padRight, h-15);
+            ctx.fillText("Position (m)", padLeft+drawW/2, h-10); ctx.fillText("0", padLeft, h-25); ctx.fillText(parseFloat(document.getElementById('input-L').value).toFixed(1), w-padRight, h-25);
 
             const drawOrder = [...solvers].sort((a,b) => a.type - b.type);
             drawOrder.forEach(solver => {
                 const isAlgo1 = (solver.type === 1);
                 const safeY = (val, max) => {
                     if (!Number.isFinite(val)) return padTop + drawH;
-                    let norm = val / max;
-                    if (norm > 2) norm = 2; if (norm < -1) norm = -1;
+                    let norm = val / max; if (norm > 2) norm = 2; if (norm < -1) norm = -1;
                     return padTop + drawH - norm * drawH;
                 };
 
@@ -375,8 +348,7 @@
 
                 ctx.beginPath();
                 for(let i=0; i<solver.N; i++) {
-                    let x = padLeft + (i/(solver.N-1))*drawW;
-                    let y = safeY(solver.h[i], axisH.max);
+                    let x = padLeft + (i/(solver.N-1))*drawW; let y = safeY(solver.h[i], axisH.max);
                     if(i===0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
                 }
                 ctx.strokeStyle = isAlgo1 ? '#7f8c8d' : '#2980b9';
@@ -386,8 +358,7 @@
                 ctx.beginPath();
                 for(let i=0; i<solver.N; i++) {
                     let u = (Number.isFinite(solver.h[i]) && solver.h[i] > 1e-6) ? solver.q[i] / solver.h[i] : 0;
-                    let x = padLeft + (i/(solver.N-1))*drawW;
-                    let y = safeY(u, axisU.max);
+                    let x = padLeft + (i/(solver.N-1))*drawW; let y = safeY(u, axisU.max);
                     if(i===0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
                 }
                 ctx.strokeStyle = isAlgo1 ? '#e67e22' : '#c0392b';
@@ -396,11 +367,8 @@
                 ctx.setLineDash([]);
             });
 
-            let title = solvers.length === 2 ? "对比: 一阶(虚) vs 二阶(实)" : (solvers[0].type === 1 ? "一阶 Rusanov" : "二阶 TVD-MUSCL");
-            ctx.fillStyle = '#34495e'; ctx.font = 'bold 12px Arial'; ctx.textAlign = 'left'; 
-            ctx.fillText(title, padLeft, 15);
-            
-            ctx.restore(); 
+            let title = solvers.length === 2 ? "算法对比: 一阶(虚线) vs 二阶(实线)" : (solvers[0].type === 1 ? "一阶 Rusanov" : "二阶 TVD-MUSCL");
+            ctx.fillStyle = '#34495e'; ctx.font = 'bold 14px Arial'; ctx.textAlign = 'left'; ctx.fillText(title, padLeft, 15);
         }
 
         function triggerExplosion() {
@@ -455,9 +423,7 @@
                 });
 
                 if (exploded) {
-                    draw(); 
-                    triggerExplosion();
-                    return;
+                    draw(); triggerExplosion(); return;
                 }
                 if (allFinished) {
                     isRunning = false; isFinished = true; updateStatusUI('Finished'); draw(); return;
@@ -467,12 +433,42 @@
             document.getElementById('disp-time').innerText = solvers[0].time.toFixed(4);
             animationId = requestAnimationFrame(loop);
         }
+        
+        // ===== 新增：横屏检测逻辑 =====
+        function checkOrientation() {
+            const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+            const overlay = document.getElementById('orientation-overlay');
+            
+            if (isMobile) {
+                // 在移动设备上，如果高度大于宽度（竖屏），则显示提示
+                if (window.innerHeight > window.innerWidth) {
+                    overlay.style.display = 'flex';
+                } else {
+                    overlay.style.display = 'none';
+                }
+            } else {
+                // 在电脑端始终隐藏
+                overlay.style.display = 'none';
+            }
+        }
+        // ==================================
 
         document.getElementById('btn-start').addEventListener('click', () => { if (solvers.length === 0) initSolvers(); if (isFinished) return; isRunning = true; updateStatusUI('Running'); loop(); });
         document.getElementById('btn-reset').addEventListener('click', () => { isRunning = false; isFinished = false; cancelAnimationFrame(animationId); initSolvers(); });
         document.getElementById('input-J').addEventListener('input', (e) => { document.getElementById('val-J').innerText = e.target.value; });
         document.getElementById('select-algo').addEventListener('change', () => { document.getElementById('btn-reset').click(); });
-        window.onload = () => { resizeCanvas(); initSolvers(); };
+        
+        // 修改 window.onload 以包含新的检测函数
+        window.onload = () => { 
+            resizeCanvas(); 
+            initSolvers(); 
+            checkOrientation(); // 页面加载时首次检测
+        };
+        
+        // 监听窗口大小和方向变化，实时检测
+        window.addEventListener('resize', checkOrientation);
+        window.addEventListener('orientationchange', checkOrientation);
+
     </script>
 </body>
 </html>
