@@ -13,3 +13,9 @@ services:
       - "33014:80"
     # 定义容器的重启策略
     restart: always
+    networks:
+      - Academia
+
+networks:
+  Academia:
+    external: true
