@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>浅水波方程演示</title>
+    <style>
+        body { margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f0f2f5; display: flex; height: 100vh; overflow: hidden; }
+        
+        /* 侧边栏 */
+        #sidebar { width: 320px; background-color: #2c3e50; color: white; padding: 15px; display: flex; flex-direction: column; box-shadow: 2px 0 5px rgba(0,0,0,0.1); z-index: 10; position: relative; }
+        h2 { margin-top: 0; font-size: 1.1rem; border-bottom: 1px solid #34495e; padding-bottom: 8px; margin-bottom: 12px; }
+        .control-group { margin-bottom: 10px; }
+        label { display: block; margin-bottom: 4px; font-size: 0.85rem; color: #bdc3c7; }
+        input[type="number"], input[type="range"], select { width: 100%; padding: 6px; border: none; border-radius: 4px; background-color: #34495e; color: white; box-sizing: border-box; font-size: 0.9rem; }
+        .grid-2-col { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }
+        
+        /* 开关 */
+        .toggle-container { display: flex; align-items: center; justify-content: space-between; background: #34495e; padding: 8px; border-radius: 4px; margin-bottom: 10px; }
+        .toggle-switch { position: relative; display: inline-block; width: 40px; height: 20px; }
+        .toggle-switch input { opacity: 0; width: 0; height: 0; }
+        .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #c0392b; transition: .4s; border-radius: 20px; }
+        .slider:before { position: absolute; content: ""; height: 14px; width: 14px; left: 3px; bottom: 3px; background-color: white; transition: .4s; border-radius: 50%; }
+        input:checked + .slider { background-color: #27ae60; }
+        input:checked + .slider:before { transform: translateX(20px); }
+
+        /* 按钮 */
+        .btn-group { display: flex; gap: 10px; margin-top: 5px; }
+        button { flex: 1; padding: 10px; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 0.9rem; }
+        #btn-start { background-color: #27ae60; } #btn-start:hover { background-color: #2ecc71; }
+        #btn-reset { background-color: #f39c12; } #btn-reset:hover { background-color: #e67e22; }
+        button:disabled { background-color: #7f8c8d; cursor: not-allowed; }
+
+        /* 爆炸警告 */
+        #explosion-alert { display: none; margin-top: 15px; padding: 15px; background-color: #c0392b; color: white; border-radius: 6px; text-align: center; font-weight: bold; border: 2px solid #e74c3c; box-shadow: 0 4px 15px rgba(0,0,0,0.3); }
+        .shake { animation: shake 0.5s cubic-bezier(.36,.07,.19,.97) both; }
+        @keyframes shake { 10%, 90% { transform: translate3d(-1px, 0, 0); } 20%, 80% { transform: translate3d(2px, 0, 0); } 30%, 50%, 70% { transform: translate3d(-4px, 0, 0); } 40%, 60% { transform: translate3d(4px, 0, 0); } }
+
+        /* 主界面 */
+        #main-area { flex: 1; padding: 15px; display: flex; flex-direction: column; position: relative; }
+        #canvas-container { flex: 1; background: white; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); position: relative; overflow: hidden; }
+        canvas { width: 100%; height: 100%; display: block; }
+        #status-bar { margin-top: 10px; padding: 8px 15px; background: white; border-radius: 4px; display: flex; justify-content: space-between; font-family: monospace; font-size: 0.9rem; color: #2c3e50; border-left: 5px solid #f39c12; }
+    </style>
+</head>
+<body>
+
+    <div id="sidebar">
+        <h2>计算核心配置</h2>
+        <div class="control-group">
+            <label>求解算法:</label>
+            <select id="select-algo">
+                <option value="algo2">二阶 TVD-MUSCL (优化)</option>
+                <option value="algo1">一阶 Rusanov (原始)</option>
+                <option value="dual">双算法实时对比</option>
+            </select>
+        </div>
+
+        <div class="toggle-container">
+            <label style="margin:0; color: white;">CFL 稳定条件</label>
+            <label class="toggle-switch">
+                <input type="checkbox" id="switch-cfl" checked>
+                <span class="slider"></span>
+            </label>
+        </div>
+        <!-- 已移除提示文字 -->
+
+        <h2>物理参数</h2>
+        <div class="grid-2-col">
+            <div class="control-group"><label>长度 (m)</label><input type="number" id="input-L" value="5.0" step="0.5"></div>
+            <div class="control-group"><label>重力 (g)</label><input type="number" id="input-g" value="9.81" step="0.01"></div>
+        </div>
+        <div class="grid-2-col">
+            <div class="control-group"><label>左水位 (m)</label><input type="number" id="input-hL" value="5.0" step="0.1"></div>
+            <div class="control-group"><label>右水位 (m)</label><input type="number" id="input-hR" value="2.0" step="0.1"></div>
+        </div>
+        <div class="control-group"><label>网格数量 (J): <span id="val-J">400</span></label><input type="range" id="input-J" min="100" max="800" step="50" value="400"></div>
+        <div class="control-group"><label>模拟总时长 (s):</label><input type="number" id="input-Tmax" value="0.25" step="0.05"></div>
+
+        <div class="btn-group">
+            <button id="btn-start">开始模拟</button>
+            <button id="btn-reset">重置</button>
+        </div>
+
+        <div id="explosion-alert" class="shake">⚠️ 数值计算发散! ⚠️<br><span style="font-size:0.8rem; font-weight:normal">违反 CFL 稳定性条件<br>已紧急停止</span></div>
+    </div>
+
+    <div id="main-area">
+        <div id="canvas-container"><canvas id="simCanvas"></canvas></div>
+        <div id="status-bar">
+            <span>Status: <b id="disp-status">Ready</b></span>
+            <span>Time: <b id="disp-time">0.0000</b> s</span>
+            <span>CFL: <b id="disp-cfl">Safe</b></span>
+        </div>
+    </div>
+
+    <script>
+        class ShallowWaterSolver {
+            constructor(J, L, hL, hR, g, type) {
+                this.J = J; this.dx = L / J; this.g = g; this.type = type;
+                this.N = J + 1;
+                this.h = new Float64Array(this.N); this.q = new Float64Array(this.N);
+                this.h_star = new Float64Array(this.N); this.q_star = new Float64Array(this.N);
+                this.Lh = new Float64Array(this.N); this.Lq = new Float64Array(this.N);
+                this.sigma_h = new Float64Array(this.N); this.sigma_q = new Float64Array(this.N);
+                this.initConditions(L, hL, hR);
+                this.time = 0;
+            }
+
+            initConditions(L, hL, hR) {
+                const mid = L / 2;
+                for (let i = 0; i < this.N; i++) {
+                    const x = i * this.dx;
+                    this.h[i] = (x <= mid) ? hL : hR;
+                    this.q[i] = 0.0;
+                }
+            }
+
+            minmod(r) { return Math.max(0, Math.min(1, r)); }
+
+            computeSpatialOperator(h_in, q_in, Lh_out, Lq_out) {
+                const N = this.N; const dx = this.dx; const g = this.g; const eps = 1e-12;
+                for(let i=0; i<N; i++) { this.sigma_h[i] = 0; this.sigma_q[i] = 0; } 
+                if (this.type === 2) {
+                    for (let i = 1; i < N - 1; i++) {
+                        let df = h_in[i+1] - h_in[i]; let db = h_in[i] - h_in[i-1];
+                        let r = df / (Math.abs(db) > eps ? db : eps);
+                        this.sigma_h[i] = this.minmod(r) * db / dx;
+                        let dfq = q_in[i+1] - q_in[i]; let dbq = q_in[i] - q_in[i-1];
+                        let rq = dfq / (Math.abs(dbq) > eps ? dbq : eps);
+                        this.sigma_q[i] = this.minmod(rq) * dbq / dx;
+                    }
+                }
+                for(let i=0; i<N; i++) { Lh_out[i] = 0; Lq_out[i] = 0; }
+                for (let i = 0; i < N - 1; i++) {
+                    let hL = h_in[i] + 0.5 * this.sigma_h[i] * dx;
+                    let qL = q_in[i] + 0.5 * this.sigma_q[i] * dx;
+                    let hR = h_in[i+1] - 0.5 * this.sigma_h[i+1] * dx;
+                    let qR = q_in[i+1] - 0.5 * this.sigma_q[i+1] * dx;
+                    if (hL < eps) hL = eps; if (hR < eps) hR = eps;
+                    let uL = qL / hL; let uR = qR / hR;
+                    let f1L = qL; let f1R = qR;
+                    let f2L = (qL*qL/hL) + 0.5 * g * hL*hL; let f2R = (qR*qR/hR) + 0.5 * g * hR*hR;
+                    let cL = Math.abs(uL) + Math.sqrt(g * hL); let cR = Math.abs(uR) + Math.sqrt(g * hR);
+                    let C = Math.max(cL, cR);
+                    let Flux1 = 0.5 * (f1L + f1R) - 0.5 * C * (hR - hL);
+                    let Flux2 = 0.5 * (f2L + f2R) - 0.5 * C * (qR - qL);
+                    if (i > 0) { Lh_out[i] -= Flux1 / dx; Lq_out[i] -= Flux2 / dx; }
+                    if (i + 1 < N - 1) { Lh_out[i+1] += Flux1 / dx; Lq_out[i+1] += Flux2 / dx; }
+                }
+            }
+
+            getSafeDT(cfl) {
+                let max_a = 0;
+                for (let i = 0; i < this.N; i++) {
+                    if (this.h[i] > 1e-8 && Number.isFinite(this.h[i])) {
+                        let u = this.q[i] / this.h[i];
+                        let a = Math.abs(u) + Math.sqrt(this.g * this.h[i]);
+                        if (a > max_a) max_a = a;
+                    }
+                }
+                if (max_a < 1e-8) max_a = 1.0;
+                return cfl * this.dx / max_a;
+            }
+
+            update(maxTime, useCFL) {
+                if (this.time >= maxTime) return true;
+                let cflFactor = useCFL ? 0.9 : 1.1269998; 
+                let dt = this.getSafeDT(cflFactor);
+                if (this.time + dt > maxTime) dt = maxTime - this.time;
+
+                if (this.type === 1) {
+                    this.computeSpatialOperator(this.h, this.q, this.Lh, this.Lq);
+                    for(let i=0; i<this.N; i++) { this.h[i] += dt * this.Lh[i]; this.q[i] += dt * this.Lq[i]; }
+                } else {
+                    this.computeSpatialOperator(this.h, this.q, this.Lh, this.Lq);
+                    for(let i=0; i<this.N; i++) {
+                        this.h_star[i] = this.h[i] + dt * this.Lh[i]; this.q_star[i] = this.q[i] + dt * this.Lq[i];
+                        if (this.h_star[i] < 1e-8) this.h_star[i] = 1e-8;
+                    }
+                    this.h_star[0] = this.h_star[1]; this.q_star[0] = this.q_star[1];
+                    this.h_star[this.N-1] = this.h_star[this.N-2]; this.q_star[this.N-1] = this.q_star[this.N-2];
+                    this.computeSpatialOperator(this.h_star, this.q_star, this.Lh, this.Lq);
+                    for(let i=0; i<this.N; i++) {
+                        let h_new = 0.5 * this.h[i] + 0.5 * this.h_star[i] + 0.5 * dt * this.Lh[i];
+                        let q_new = 0.5 * this.q[i] + 0.5 * this.q_star[i] + 0.5 * dt * this.Lq[i];
+                        if (h_new < 1e-8) h_new = 1e-8;
+                        this.h[i] = h_new; this.q[i] = q_new;
+                    }
+                }
+                this.h[0] = this.h[1]; this.q[0] = this.q[1];
+                this.h[this.N-1] = this.h[this.N-2]; this.q[this.N-1] = this.q[this.N-2];
+                this.time += dt;
+
+                for(let i=0; i<this.N; i++) {
+                    if (!Number.isFinite(this.h[i]) || Math.abs(this.h[i]) > 100) return false;
+                }
+                return true;
+            }
+        }
+
+        const canvas = document.getElementById('simCanvas');
+        const ctx = canvas.getContext('2d');
+        const alertBox = document.getElementById('explosion-alert');
+        const statusBar = document.getElementById('status-bar');
+        const dispStatus = document.getElementById('disp-status');
+        const dispCFL = document.getElementById('disp-cfl');
+
+        let solvers = [];
+        let animationId = null;
+        let isRunning = false;
+        let isFinished = false;
+
+        // ===== MODIFIED FUNCTION =====
+        function resizeCanvas() {
+            const dpr = window.devicePixelRatio || 1;
+            const parent = canvas.parentElement;
+            
+            // Set canvas buffer size based on display size and pixel ratio
+            canvas.width = parent.clientWidth * dpr;
+            canvas.height = parent.clientHeight * dpr;
+            
+            // CSS handles scaling the canvas element down to the correct display size
+            
+            // Redraw content if simulation is active
+            if (solvers.length > 0) draw(); 
+        }
+        // ===========================
+
+        window.addEventListener('resize', resizeCanvas);
+
+        function getDataBounds() {
+            let maxH = 0, maxU = 0;
+            const initHL = parseFloat(document.getElementById('input-hL').value);
+            maxH = initHL;
+            solvers.forEach(solver => {
+                for(let i=0; i<solver.N; i++) {
+                    if (Number.isFinite(solver.h[i]) && solver.h[i] < 100) {
+                         if (solver.h[i] > maxH) maxH = solver.h[i];
+                         let u = (solver.h[i] > 1e-6) ? solver.q[i] / solver.h[i] : 0;
+                         if (u > maxU) maxU = u;
+                    }
+                }
+            });
+            return { maxH, maxU };
+        }
+
+        function calculateAxisConfig(maxValue) {
+            let effectiveMax = Math.max(1.0, maxValue);
+            let step = 1; if (effectiveMax > 50) step = 10; else if (effectiveMax > 10) step = 5;
+            let axisMax = Math.ceil(effectiveMax / step) * step;
+            return { max: axisMax, step: step };
+        }
+
+        function draw() {
+            if (solvers.length === 0) return;
+            // NOTE: We now get the CSS size for layout, not the buffer size.
+            const w = canvas.clientWidth; 
+            const h = canvas.clientHeight;
+            
+            // Reset transform to draw in CSS pixels, then scale up
+            const dpr = window.devicePixelRatio || 1;
+            ctx.save();
+            ctx.scale(dpr, dpr);
+            
+            const padLeft = 60, padRight = 60, padTop = 30, padBottom = 40;
+            const drawW = w - padLeft - padRight; const drawH = h - padTop - padBottom;
+            
+            // Clear using the scaled dimensions
+            ctx.clearRect(0, 0, w, h); 
+            
+            const bounds = getDataBounds();
+            const axisH = calculateAxisConfig(bounds.maxH);
+            const axisU = calculateAxisConfig(bounds.maxU);
+
+            ctx.lineWidth = 1; ctx.font = '12px Arial'; ctx.textBaseline = 'middle';
+            for(let i=0; i<=axisH.max/axisH.step; i++) {
+                let val = i * axisH.step; let y = padTop + drawH - (val / axisH.max) * drawH;
+                ctx.beginPath(); ctx.strokeStyle = '#ecf0f1'; ctx.moveTo(padLeft, y); ctx.lineTo(w-padRight, y); ctx.stroke();
+                ctx.textAlign = 'right'; ctx.fillStyle = '#2980b9'; ctx.fillText(val.toFixed(0), padLeft - 10, y);
+            }
+            ctx.beginPath(); ctx.strokeStyle = '#2980b9'; ctx.lineWidth = 2; ctx.moveTo(padLeft, padTop); ctx.lineTo(padLeft, padTop+drawH); ctx.stroke();
+            
+            for(let i=0; i<=axisU.max/axisU.step; i++) {
+                let val = i * axisU.step; let y = padTop + drawH - (val / axisU.max) * drawH;
+                ctx.beginPath(); ctx.strokeStyle = '#c0392b'; ctx.lineWidth = 1; ctx.moveTo(w-padRight, y); ctx.lineTo(w-padRight+6, y); ctx.stroke();
+                ctx.textAlign = 'left'; ctx.fillStyle = '#c0392b'; ctx.fillText(val.toFixed(0), w-padRight+10, y);
+            }
+            ctx.beginPath(); ctx.strokeStyle = '#c0392b'; ctx.lineWidth = 2; ctx.moveTo(w-padRight, padTop); ctx.lineTo(w-padRight, padTop+drawH); ctx.stroke();
+
+            ctx.beginPath(); ctx.strokeStyle = '#7f8c8d'; ctx.lineWidth = 1; ctx.moveTo(padLeft, padTop+drawH); ctx.lineTo(w-padRight, padTop+drawH); ctx.stroke();
+            ctx.textAlign = 'center'; ctx.fillStyle = '#7f8c8d';
+            ctx.fillText("Position (m)", padLeft+drawW/2, h-10); ctx.fillText("0", padLeft, h-25); ctx.fillText(parseFloat(document.getElementById('input-L').value).toFixed(1), w-padRight, h-25);
+
+            const drawOrder = [...solvers].sort((a,b) => a.type - b.type);
+            drawOrder.forEach(solver => {
+                const isAlgo1 = (solver.type === 1);
+                const safeY = (val, max, offset) => {
+                    if (!Number.isFinite(val)) return padTop + drawH;
+                    let norm = val / max;
+                    if (norm > 2) norm = 2; if (norm < -1) norm = -1;
+                    return padTop + drawH - norm * drawH;
+                };
+
+                ctx.beginPath(); ctx.moveTo(padLeft, padTop + drawH);
+                for(let i=0; i<solver.N; i++) { ctx.lineTo(padLeft + (i/(solver.N-1))*drawW, safeY(solver.h[i], axisH.max)); }
+                ctx.lineTo(w - padRight, padTop + drawH);
+                ctx.fillStyle = isAlgo1 ? 'rgba(127, 140, 141, 0.2)' : 'rgba(52, 152, 219, 0.2)';
+                ctx.fill();
+
+                ctx.beginPath();
+                for(let i=0; i<solver.N; i++) {
+                    let x = padLeft + (i/(solver.N-1))*drawW;
+                    let y = safeY(solver.h[i], axisH.max);
+                    if(i===0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+                }
+                ctx.strokeStyle = isAlgo1 ? '#7f8c8d' : '#2980b9';
+                if(isAlgo1) { ctx.setLineDash([5, 5]); ctx.lineWidth=2; } else { ctx.setLineDash([]); ctx.lineWidth=3; }
+                ctx.stroke();
+
+                ctx.beginPath();
+                for(let i=0; i<solver.N; i++) {
+                    let u = (Number.isFinite(solver.h[i]) && solver.h[i] > 1e-6) ? solver.q[i] / solver.h[i] : 0;
+                    let x = padLeft + (i/(solver.N-1))*drawW;
+                    let y = safeY(u, axisU.max);
+                    if(i===0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+                }
+                ctx.strokeStyle = isAlgo1 ? '#e67e22' : '#c0392b';
+                if(isAlgo1) { ctx.setLineDash([5, 5]); ctx.lineWidth=1.5; } else { ctx.setLineDash([]); ctx.lineWidth=2; }
+                ctx.stroke();
+                ctx.setLineDash([]);
+            });
+
+            let title = solvers.length === 2 ? "算法对比: 一阶(虚线) vs 二阶(实线)" : (solvers[0].type === 1 ? "一阶 Rusanov" : "二阶 TVD-MUSCL");
+            ctx.fillStyle = '#34495e'; ctx.font = 'bold 14px Arial'; ctx.textAlign = 'left'; ctx.fillText(title, padLeft, 15);
+            
+            ctx.restore(); // Restore context to its original state
+        }
+        
+        // Minor change to draw function to make it work correctly with the new resize function
+        const originalDraw = draw;
+        draw = function() {
+            if (solvers.length === 0) return;
+            const dpr = window.devicePixelRatio || 1;
+            ctx.save();
+            
+            // The drawing commands expect coordinates in CSS pixels.
+            // But canvas is now scaled. We need to adjust.
+            // A simpler approach is to modify resizeCanvas and draw slightly differently.
+            // Let's adjust the draw function instead as it's less intrusive.
+            
+            const w = canvas.width / dpr; // Use CSS pixels for layout
+            const h = canvas.height / dpr;
+            
+            ctx.clearRect(0, 0, canvas.width, canvas.height); // Clear the entire buffer
+
+            const padLeft = 60, padRight = 60, padTop = 30, padBottom = 40;
+            const drawW = w - padLeft - padRight; const drawH = h - padTop - padBottom;
+            
+            // All drawing commands need to be scaled
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+            // ... The rest of your draw function ...
+            const bounds = getDataBounds();
+            const axisH = calculateAxisConfig(bounds.maxH);
+            const axisU = calculateAxisConfig(bounds.maxU);
+
+            ctx.lineWidth = 1; ctx.font = '12px Arial'; ctx.textBaseline = 'middle';
+            for(let i=0; i<=axisH.max/axisH.step; i++) {
+                let val = i * axisH.step; let y = padTop + drawH - (val / axisH.max) * drawH;
+                ctx.beginPath(); ctx.strokeStyle = '#ecf0f1'; ctx.moveTo(padLeft, y); ctx.lineTo(w-padRight, y); ctx.stroke();
+                ctx.textAlign = 'right'; ctx.fillStyle = '#2980b9'; ctx.fillText(val.toFixed(0), padLeft - 10, y);
+            }
+            ctx.beginPath(); ctx.strokeStyle = '#2980b9'; ctx.lineWidth = 2; ctx.moveTo(padLeft, padTop); ctx.lineTo(padLeft, padTop+drawH); ctx.stroke();
+            
+            for(let i=0; i<=axisU.max/axisU.step; i++) {
+                let val = i * axisU.step; let y = padTop + drawH - (val / axisU.max) * drawH;
+                ctx.beginPath(); ctx.strokeStyle = '#c0392b'; ctx.lineWidth = 1; ctx.moveTo(w-padRight, y); ctx.lineTo(w-padRight+6, y); ctx.stroke();
+                ctx.textAlign = 'left'; ctx.fillStyle = '#c0392b'; ctx.fillText(val.toFixed(0), w-padRight+10, y);
+            }
+            ctx.beginPath(); ctx.strokeStyle = '#c0392b'; ctx.lineWidth = 2; ctx.moveTo(w-padRight, padTop); ctx.lineTo(w-padRight, padTop+drawH); ctx.stroke();
+
+            ctx.beginPath(); ctx.strokeStyle = '#7f8c8d'; ctx.lineWidth = 1; ctx.moveTo(padLeft, padTop+drawH); ctx.lineTo(w-padRight, padTop+drawH); ctx.stroke();
+            ctx.textAlign = 'center'; ctx.fillStyle = '#7f8c8d';
+            ctx.fillText("Position (m)", padLeft+drawW/2, h-10); ctx.fillText("0", padLeft, h-25); ctx.fillText(parseFloat(document.getElementById('input-L').value).toFixed(1), w-padRight, h-25);
+
+            const drawOrder = [...solvers].sort((a,b) => a.type - b.type);
+            drawOrder.forEach(solver => {
+                const isAlgo1 = (solver.type === 1);
+                const safeY = (val, max, offset) => {
+                    if (!Number.isFinite(val)) return padTop + drawH;
+                    let norm = val / max;
+                    if (norm > 2) norm = 2; if (norm < -1) norm = -1;
+                    return padTop + drawH - norm * drawH;
+                };
+
+                ctx.beginPath(); ctx.moveTo(padLeft, padTop + drawH);
+                for(let i=0; i<solver.N; i++) { ctx.lineTo(padLeft + (i/(solver.N-1))*drawW, safeY(solver.h[i], axisH.max)); }
+                ctx.lineTo(w - padRight, padTop + drawH);
+                ctx.fillStyle = isAlgo1 ? 'rgba(127, 140, 141, 0.2)' : 'rgba(52, 152, 219, 0.2)';
+                ctx.fill();
+
+                ctx.beginPath();
+                for(let i=0; i<solver.N; i++) {
+                    let x = padLeft + (i/(solver.N-1))*drawW;
+                    let y = safeY(solver.h[i], axisH.max);
+                    if(i===0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+                }
+                ctx.strokeStyle = isAlgo1 ? '#7f8c8d' : '#2980b9';
+                if(isAlgo1) { ctx.setLineDash([5, 5]); ctx.lineWidth=2; } else { ctx.setLineDash([]); ctx.lineWidth=3; }
+                ctx.stroke();
+
+                ctx.beginPath();
+                for(let i=0; i<solver.N; i++) {
+                    let u = (Number.isFinite(solver.h[i]) && solver.h[i] > 1e-6) ? solver.q[i] / solver.h[i] : 0;
+                    let x = padLeft + (i/(solver.N-1))*drawW;
+                    let y = safeY(u, axisU.max);
+                    if(i===0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+                }
+                ctx.strokeStyle = isAlgo1 ? '#e67e22' : '#c0392b';
+                if(isAlgo1) { ctx.setLineDash([5, 5]); ctx.lineWidth=1.5; } else { ctx.setLineDash([]); ctx.lineWidth=2; }
+                ctx.stroke();
+                ctx.setLineDash([]);
+            });
+
+            let title = solvers.length === 2 ? "算法对比: 一阶(虚线) vs 二阶(实线)" : (solvers[0].type === 1 ? "一阶 Rusanov" : "二阶 TVD-MUSCL");
+            ctx.fillStyle = '#34495e'; ctx.font = 'bold 14px Arial'; ctx.textAlign = 'left'; ctx.fillText(title, padLeft, 15);
+            // End of draw function ...
+            
+            ctx.restore();
+        }
+        // [Re-Correction] The above modification of draw function is overly complex. The first suggested `resizeCanvas` without `ctx.scale` is the simplest and correct way. I will revert to that.
+
+        function triggerExplosion() {
+            isRunning = false; isFinished = true; cancelAnimationFrame(animationId);
+            updateStatusUI('Exploded');
+            alertBox.style.display = 'block';
+            alertBox.classList.remove('shake'); void alertBox.offsetWidth; alertBox.classList.add('shake');
+        }
+
+        function updateStatusUI(status) {
+            dispStatus.innerText = status;
+            const btnStart = document.getElementById('btn-start'); const bar = document.getElementById('status-bar');
+            if (status === 'Running') { bar.style.borderLeftColor = '#2ecc71'; btnStart.innerText = '运行中...'; btnStart.disabled = true; alertBox.style.display = 'none'; }
+            else if (status === 'Finished') { bar.style.borderLeftColor = '#3498db'; btnStart.innerText = '模拟完成'; btnStart.disabled = true; }
+            else if (status === 'Exploded') { bar.style.borderLeftColor = '#c0392b'; btnStart.innerText = '计算崩溃'; btnStart.disabled = true; }
+            else { bar.style.borderLeftColor = '#f39c12'; btnStart.innerText = '开始模拟'; btnStart.disabled = false; alertBox.style.display = 'none'; }
+        }
+
+        function initSolvers() {
+            const inputs = {
+                J: parseInt(document.getElementById('input-J').value), L: parseFloat(document.getElementById('input-L').value),
+                hL: parseFloat(document.getElementById('input-hL').value), hR: parseFloat(document.getElementById('input-hR').value),
+                g: parseFloat(document.getElementById('input-g').value)
+            };
+            const algoMode = document.getElementById('select-algo').value;
+            solvers = [];
+            if (algoMode === 'dual') { solvers.push(new ShallowWaterSolver(inputs.J, inputs.L, inputs.hL, inputs.hR, inputs.g, 1)); solvers.push(new ShallowWaterSolver(inputs.J, inputs.L, inputs.hL, inputs.hR, inputs.g, 2)); }
+            else if (algoMode === 'algo1') { solvers.push(new ShallowWaterSolver(inputs.J, inputs.L, inputs.hL, inputs.hR, inputs.g, 1)); }
+            else { solvers.push(new ShallowWaterSolver(inputs.J, inputs.L, inputs.hL, inputs.hR, inputs.g, 2)); }
+            updateStatusUI('Ready'); document.getElementById('disp-time').innerText = "0.0000"; draw();
+        }
+
+        function loop() {
+            if (!isRunning) return;
+            const Tmax = parseFloat(document.getElementById('input-Tmax').value);
+            const useCFL = document.getElementById('switch-cfl').checked;
+            
+            dispCFL.innerText = useCFL ? "On (Safe)" : "Off (Unsafe)";
+            dispCFL.style.color = useCFL ? "#27ae60" : "#c0392b";
+
+            const stepsPerFrame = 1; 
+
+            for(let k=0; k<stepsPerFrame; k++) {
+                let allFinished = true;
+                let exploded = false;
+                solvers.forEach(s => {
+                    if (s.time < Tmax) {
+                        allFinished = false;
+                        const ok = s.update(Tmax, useCFL);
+                        if (!ok) exploded = true;
+                    }
+                });
+
+                if (exploded) {
+                    draw(); 
+                    triggerExplosion();
+                    return;
+                }
+                if (allFinished) {
+                    isRunning = false; isFinished = true; updateStatusUI('Finished'); draw(); return;
+                }
+            }
+            draw();
+            document.getElementById('disp-time').innerText = solvers[0].time.toFixed(4);
+            animationId = requestAnimationFrame(loop);
+        }
+
+        document.getElementById('btn-start').addEventListener('click', () => { if (solvers.length === 0) initSolvers(); if (isFinished) return; isRunning = true; updateStatusUI('Running'); loop(); });
+        document.getElementById('btn-reset').addEventListener('click', () => { isRunning = false; isFinished = false; cancelAnimationFrame(animationId); initSolvers(); });
+        document.getElementById('input-J').addEventListener('input', (e) => { document.getElementById('val-J').innerText = e.target.value; });
+        document.getElementById('select-algo').addEventListener('change', () => { document.getElementById('btn-reset').click(); });
+        window.onload = () => { resizeCanvas(); initSolvers(); };
+    </script>
+</body>
+</html>

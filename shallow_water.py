@@ -1,250 +1,338 @@
 import numpy as np
 import matplotlib.pyplot as plt
-import sys
+import multiprocessing as mp
+import time
+from numba import jit, float64, int64
 
 # ==========================================
-# 第一部分：辅助函数与限制器
+# 第一部分：高性能计算内核 (Backend Core)
+# 使用 Numba 进行 JIT 编译，达到 C++ 级速度
 # ==========================================
 
-def minmod_limiter(r):
-    """
-    Minmod 限制器
-    """
-    # 对应 MATLAB: psi = max(0, min(1, r))
-    return np.maximum(0, np.minimum(1, r))
+@jit(nopython=True, cache=True)
+def minmod(r):
+    """Minmod 限制器 (JIT 加速版)"""
+    return max(0.0, min(1.0, r))
 
-# ==========================================
-# 第二部分：空间算子 (核心修复部分)
-# ==========================================
-
-def spatial_operator(U, dx, g):
+@jit(nopython=True, cache=True)
+def compute_step(U, dx, g, dt):
     """
-    计算空间导数项 L(U)
-    修复了数组广播错误，严格对齐网格与界面索引。
+    计算单个时间步的核心逻辑
+    包含：斜率计算、MUSCL重构、Rusanov通量、时间积分
+    输入 U: (2, J+1)
     """
-    # U 的形状是 (2, N)，其中 N = J + 1
-    # 物理网格点从 0 到 J
-    rows, N = U.shape
+    # 获取维度
+    # 注意：Numba 中尽量减少数组切片创建副本，使用循环通常更快
+    # 但为了保持代码逻辑可读性，这里优化了关键路径
     
-    h = U[0, :]
-    q = U[1, :]
-    eps = 1e-12 
-
-    # --- 步骤 1: 计算斜率 (Slope) ---
-    # 我们先初始化斜率为全 0 (对应边界处斜率为0)
+    rows, N = U.shape
+    eps = 1e-12
+    
+    # ---------------------------
+    # 1. 空间算子 L(U) 计算
+    # ---------------------------
+    
+    # 初始化导数项
+    L = np.zeros_like(U)
+    
+    # 预分配数组以避免内存反复申请
+    # 内部网格索引范围: 1 到 N-2
+    # 界面数量: N-1 (索引 0 到 N-2)
+    
+    # --- 循环计算内部网格的斜率 ---
+    # 这里我们使用显式循环，这在 Numba 中往往比切片更快且更节省内存
+    
     sigma_h = np.zeros(N)
     sigma_q = np.zeros(N)
     
-    # 仅计算内部网格 (索引 1 到 N-2) 的梯度比率 r
-    # 需要用到 (i-1), i, (i+1)
-    # Python 切片: [1:-1] 代表 i, [2:] 代表 i+1, [:-2] 代表 i-1
-    diff_forward_h = h[2:] - h[1:-1]
-    diff_backward_h = h[1:-1] - h[:-2]
+    for i in range(1, N-1):
+        # h 的斜率
+        diff_fwd = U[0, i+1] - U[0, i]
+        diff_bwd = U[0, i] - U[0, i-1]
+        denom = diff_bwd if abs(diff_bwd) > eps else eps
+        r = diff_fwd / denom
+        phi = max(0.0, min(1.0, r)) # Minmod 内联
+        sigma_h[i] = phi * diff_bwd / dx
+        
+        # q 的斜率
+        diff_fwd_q = U[1, i+1] - U[1, i]
+        diff_bwd_q = U[1, i] - U[1, i-1]
+        denom_q = diff_bwd_q if abs(diff_bwd_q) > eps else eps
+        r_q = diff_fwd_q / denom_q
+        phi_q = max(0.0, min(1.0, r_q))
+        sigma_q[i] = phi_q * diff_bwd_q / dx
+
+    # --- 计算通量 Flux (循环所有界面 i=0 到 N-2) ---
+    # Flux_i 代表界面 i+1/2 的通量
     
-    # 防止分母为0
-    denom_h = diff_backward_h.copy()
-    denom_h[np.abs(denom_h) < eps] = eps
-    r_h = diff_forward_h / denom_h
+    # 临时存储 Flux
+    Flux1 = np.zeros(N-1)
+    Flux2 = np.zeros(N-1)
     
-    diff_forward_q = q[2:] - q[1:-1]
-    diff_backward_q = q[1:-1] - q[:-2]
-    
-    denom_q = diff_backward_q.copy()
-    denom_q[np.abs(denom_q) < eps] = eps
-    r_q = diff_forward_q / denom_q
-    
-    # 计算限制器 phi
-    phi_h = minmod_limiter(r_h)
-    phi_q = minmod_limiter(r_q)
-    
-    # 填充内部斜率
-    sigma_h[1:-1] = phi_h * (h[1:-1] - h[:-2]) / dx
-    sigma_q[1:-1] = phi_q * (q[1:-1] - q[:-2]) / dx
-    
-    # --- 步骤 2: MUSCL 重构界面值 ---
-    # 我们有 N 个网格中心，意味着有 N-1 个界面 (索引 0 到 N-2)
-    # 界面 i 位于 网格 i 和 网格 i+1 之间
-    
-    # U_L (界面左侧): 来自网格 i 的右外推
-    # U_L = U[i] + 0.5 * sigma[i] * dx
-    # 使用切片 [:-1] 对应索引 0 到 N-2
-    h_L = h[:-1] + 0.5 * sigma_h[:-1] * dx
-    q_L = q[:-1] + 0.5 * sigma_q[:-1] * dx
-    
-    # U_R (界面右侧): 来自网格 i+1 的左外推
-    # U_R = U[i+1] - 0.5 * sigma[i+1] * dx
-    # 使用切片 [1:] 对应索引 1 到 N-1 (即网格 i+1)
-    h_R = h[1:] - 0.5 * sigma_h[1:] * dx
-    q_R = q[1:] - 0.5 * sigma_q[1:] * dx
-    
-    # 物理修正 (水深非负)
-    h_L = np.maximum(h_L, eps)
-    h_R = np.maximum(h_R, eps)
-    
-    u_L = q_L / h_L
-    u_R = q_R / h_R
-    
-    # --- 步骤 3: Rusanov 通量计算 ---
-    # 此时 Flux 的长度为 N-1，对应所有内部界面
-    
-    # 通量函数 f(U)
-    f1L = q_L
-    f1R = q_R
-    
-    f2L = (q_L**2 / h_L) + 0.5 * g * h_L**2
-    f2R = (q_R**2 / h_R) + 0.5 * g * h_R**2
-    
-    # 局部波速
-    c_L = np.abs(u_L) + np.sqrt(g * h_L)
-    c_R = np.abs(u_R) + np.sqrt(g * h_R)
-    C = np.maximum(c_L, c_R)
-    
-    # Rusanov 公式
-    Flux1 = 0.5 * (f1L + f1R) - 0.5 * C * (h_R - h_L)
-    Flux2 = 0.5 * (f2L + f2R) - 0.5 * C * (q_R - q_L)
-    
-    # --- 步骤 4: 更新导数 L ---
-    # L[i] = -1/dx * (Flux[i] - Flux[i-1])
-    # Flux[i] 是网格 i 右边的界面，Flux[i-1] 是网格 i 左边的界面
-    
-    L = np.zeros_like(U)
-    
-    # 我们只更新内部网格 1 到 N-2
-    # Flux1[1:] 对应右界面 (i=1 到 N-2 的右界面)
-    # Flux1[:-1] 对应左界面 (i=1 到 N-2 的左界面)
-    # 长度检查: 
-    # N=401 -> Flux长度 400. 
-    # Flux1[1:] 长度 399. Flux1[:-1] 长度 399.
-    # L[:, 1:-1] 长度 399. 
-    # 维度完美匹配。
-    
-    L[0, 1:-1] = -1.0/dx * (Flux1[1:] - Flux1[:-1])
-    L[1, 1:-1] = -1.0/dx * (Flux2[1:] - Flux2[:-1])
-    
+    for i in range(N-1):
+        # 左侧重构 (来自网格 i)
+        h_L = U[0, i] + 0.5 * sigma_h[i] * dx
+        q_L = U[1, i] + 0.5 * sigma_q[i] * dx
+        
+        # 右侧重构 (来自网格 i+1)
+        h_R = U[0, i+1] - 0.5 * sigma_h[i+1] * dx
+        q_R = U[1, i+1] - 0.5 * sigma_q[i+1] * dx
+        
+        # 物理修正
+        h_L = max(h_L, eps)
+        h_R = max(h_R, eps)
+        
+        u_L = q_L / h_L
+        u_R = q_R / h_R
+        
+        # Rusanov 通量
+        # F1 = q
+        f1L = q_L
+        f1R = q_R
+        
+        # F2 = q^2/h + 0.5*g*h^2
+        f2L = (q_L**2 / h_L) + 0.5 * g * h_L**2
+        f2R = (q_R**2 / h_R) + 0.5 * g * h_R**2
+        
+        # 波速
+        c_L = abs(u_L) + np.sqrt(g * h_L)
+        c_R = abs(u_R) + np.sqrt(g * h_R)
+        C = max(c_L, c_R)
+        
+        Flux1[i] = 0.5 * (f1L + f1R) - 0.5 * C * (h_R - h_L)
+        Flux2[i] = 0.5 * (f2L + f2R) - 0.5 * C * (q_R - q_L)
+
+    # --- 更新 L (只更新内部网格 1 到 N-2) ---
+    for i in range(1, N-1):
+        # Flux[i] 是右界面，Flux[i-1] 是左界面
+        L[0, i] = -1.0/dx * (Flux1[i] - Flux1[i-1])
+        L[1, i] = -1.0/dx * (Flux2[i] - Flux2[i-1])
+        
     return L
 
-# ==========================================
-# 第三部分：主程序
-# ==========================================
-
-def main():
-    # 参数设置
-    g = 9.81
-    Xmax = 5.0
-    Tmax = 0.5
-    J = 400
-    dx = Xmax / J
-    
-    # 初始化
-    x = np.linspace(0, Xmax, J+1)
-    U = np.zeros((2, J+1))
-    
-    # 初始条件：溃坝
-    mask_left = x <= 2.5
-    U[0, mask_left] = 5.0  # h left
-    U[0, ~mask_left] = 2.0 # h right
-    U[1, :] = 0.0          # q initial
-    
-    current_time = 0.0
-    step_count = 0
+@jit(nopython=True, cache=True)
+def get_dt(U, dx, g, cfl):
+    """JIT加速的 CFL 步长计算"""
+    rows, N = U.shape
+    max_wave_speed = 0.0
     eps = 1e-8
     
-    # 绘图设置
-    plt.ion()
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(8, 8))
+    for i in range(1, N-1):
+        h = U[0, i]
+        q = U[1, i]
+        if h > eps:
+            u = q / h
+            wave_speed = abs(u) + np.sqrt(g * h)
+            if wave_speed > max_wave_speed:
+                max_wave_speed = wave_speed
     
-    # 上图：水位
-    line_h, = ax1.plot(x, U[0, :], 'b-', linewidth=2)
-    ax1.set_ylim(0, 6)
-    ax1.set_ylabel('Water Level h (m)')
-    ax1.set_title('2D TVD-MUSCL Simulation')
-    ax1.grid(True)
-    
-    # 下图：流速
-    line_u, = ax2.plot(x, np.zeros_like(x), 'r-', linewidth=2)
-    ax2.set_ylim(-1, 5)
-    ax2.set_xlabel('Position x (m)')
-    ax2.set_ylabel('Velocity u (m/s)')
-    ax2.grid(True)
-    
-    print("开始计算...")
-    
-    try:
+    if max_wave_speed < eps:
+        max_wave_speed = 1.0
+        
+    return cfl * dx / max_wave_speed
+
+# ==========================================
+# 第二部分：仿真进程 (Producer)
+# 职责：只负责算，算完扔进队列
+# ==========================================
+
+class SimulationProcess(mp.Process):
+    def __init__(self, data_queue, config):
+        super().__init__()
+        self.queue = data_queue
+        self.cfg = config
+        self.daemon = True # 主程序退出时自动销毁
+        
+    def run(self):
+        # 解包配置
+        g = self.cfg['g']
+        dx = self.cfg['dx']
+        J = self.cfg['J']
+        Tmax = self.cfg['Tmax']
+        
+        # 初始化数据
+        x = np.linspace(0, self.cfg['Xmax'], J+1)
+        U = np.zeros((2, J+1))
+        
+        # 初始条件 (Numpy 操作)
+        mask_left = x <= self.cfg['Xmax']/2
+        U[0, mask_left] = 5.0
+        U[0, ~mask_left] = 2.0
+        
+        current_time = 0.0
+        eps = 1e-8
+        
+        # 预热 Numba (第一次运行会编译，比较慢，不计入队列)
+        print("[Compute] JIT Compiling physics kernel...")
+        _ = compute_step(U, dx, g, 0.001)
+        _ = get_dt(U, dx, g, 0.9)
+        print("[Compute] Compilation done. Simulation started.")
+        
+        step = 0
+        
         while current_time < Tmax:
-            # 提取变量
-            h = U[0, :]
-            q = U[1, :]
-            u = np.zeros_like(q)
-            mask_wet = h > eps
-            u[mask_wet] = q[mask_wet] / h[mask_wet]
-            
-            # --- CFL 时间步长控制 ---
-            # 仅在内部区域计算波速，避免边界干扰
-            a_local = np.abs(u[1:-1]) + np.sqrt(g * h[1:-1])
-            a_max = np.max(a_local) if a_local.size > 0 else 1.0
-            if a_max < eps: a_max = 1.0
-            
-            Cr = 0.9
-            dt = Cr * dx / a_max
-            
-            # 确保不超出 Tmax
+            # 1. 计算时间步长
+            dt = get_dt(U, dx, g, 0.9)
             if current_time + dt > Tmax:
                 dt = Tmax - current_time
-            
-            # 如果 dt 变得极小，强制停止防止死循环
-            if dt < 1e-10:
-                break
-
-            # --- TVD-RK2 时间步进 ---
-            
-            # 处理边界 (零梯度)
+            if dt < 1e-10: break
+                
+            # 2. TVD-RK2 第一步 (Predictor)
+            # 边界处理 (零梯度)
             U[:, 0] = U[:, 1]
             U[:, -1] = U[:, -2]
             
-            # Stage 1: Predictor
-            L_n = spatial_operator(U, dx, g)
-            U_star = U + dt * L_n
+            L1 = compute_step(U, dx, g, dt)
+            U_star = U + dt * L1
             
-            # 修正 U_star
-            U_star[0, :] = np.maximum(U_star[0, :], eps)
+            # 物理约束
+            for i in range(J+1):
+                if U_star[0, i] < eps: U_star[0, i] = eps
+            
+            # 边界处理 U*
             U_star[:, 0] = U_star[:, 1]
             U_star[:, -1] = U_star[:, -2]
             
-            # Stage 2: Corrector
-            L_star = spatial_operator(U_star, dx, g)
-            U_new = 0.5 * U + 0.5 * U_star + 0.5 * dt * L_star
+            # 3. TVD-RK2 第二步 (Corrector)
+            L2 = compute_step(U_star, dx, g, dt)
+            U_new = 0.5 * U + 0.5 * U_star + 0.5 * dt * L2
             
-            # 更新
+            # 更新状态
             U = U_new
-            U[0, :] = np.maximum(U[0, :], eps)
-            
+            # 物理约束
+            for i in range(J+1):
+                if U[0, i] < eps: U[0, i] = eps
+                
             current_time += dt
-            step_count += 1
+            step += 1
             
-            # 绘图刷新 (每50步或最后一步)
-            if step_count % 50 == 0 or np.abs(current_time - Tmax) < 1e-9:
-                line_h.set_ydata(U[0, :])
-                
-                # 计算实时流速用于绘图
-                h_plot = U[0, :]
-                q_plot = U[1, :]
-                u_plot = np.zeros_like(q_plot)
-                mask = h_plot > eps
-                u_plot[mask] = q_plot[mask] / h_plot[mask]
-                line_u.set_ydata(u_plot)
-                
-                ax1.set_title(f'Time = {current_time:.4f} s | Step = {step_count}')
-                plt.draw()
-                plt.pause(0.001)
+            # 4. 将结果推入队列
+            # 发送 (时间, 水位, 流速) 的副本
+            # 注意：为了性能，不要发送整个 U，只发用于显示的副本
+            if self.queue.full():
+                # 如果队列满了，计算进程会在这里阻塞
+                # 这保证了显示进程能跟上，实现了"精确显示每一步"
+                # 如果不需要精确显示，可以用 self.queue.put_nowait 并在异常时跳过
+                pass
+            
+            # 计算流速用于传输
+            h_send = U[0, :].copy()
+            q_send = U[1, :].copy()
+            u_send = np.zeros_like(h_send)
+            mask = h_send > eps
+            u_send[mask] = q_send[mask] / h_send[mask]
+            
+            self.queue.put((current_time, h_send, u_send, step))
         
-        print(f"计算完成。T = {current_time:.4f}s")
-        plt.ioff()
-        plt.show()
+        # 发送结束信号
+        self.queue.put(None)
+        print("[Compute] Simulation finished.")
 
-    except Exception as e:
-        print(f"\n发生错误: {e}")
-        import traceback
-        traceback.print_exc()
+# ==========================================
+# 第三部分：显示进程 (Consumer)
+# 职责：只负责画，不进行任何物理计算
+# ==========================================
+
+class VisualizationProcess(mp.Process):
+    def __init__(self, data_queue, config):
+        super().__init__()
+        self.queue = data_queue
+        self.cfg = config
+        
+    def run(self):
+        # 初始化绘图窗口
+        plt.ion()
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8))
+        
+        x = np.linspace(0, self.cfg['Xmax'], self.cfg['J']+1)
+        
+        # 初始化线条
+        line_h, = ax1.plot(x, np.zeros_like(x), 'b-', linewidth=2)
+        ax1.set_ylim(0, 6)
+        ax1.set_ylabel('Water Level (m)')
+        ax1.set_title('Real-time Computation Stream')
+        ax1.grid(True)
+        
+        line_u, = ax2.plot(x, np.zeros_like(x), 'r-', linewidth=2)
+        ax2.set_ylim(-2, 6)
+        ax2.set_ylabel('Velocity (m/s)')
+        ax2.set_xlabel('Position (m)')
+        ax2.grid(True)
+        
+        print("[Visual] Window ready. Waiting for data...")
+        
+        frame_count = 0
+        last_render_time = time.time()
+        
+        while True:
+            # 从队列获取数据
+            try:
+                # 阻塞式获取，等待计算结果
+                item = self.queue.get()
+            except Exception:
+                break
+                
+            if item is None:
+                print("[Visual] Received stop signal.")
+                break
+                
+            # 解包数据
+            sim_time, h, u, step = item
+            
+            # 渲染控制：限制FPS，避免绘图消耗过多资源导致队列堆积
+            # 如果你想要"精确每一帧"，可以注释掉这个 if
+            # 但实际上 matplotlib 绘图很慢，每秒只能画几十帧
+            # current_wall_time = time.time()
+            # if current_wall_time - last_render_time < 0.016: # 限制约 60 FPS
+            #     continue
+            
+            # 更新图表
+            line_h.set_ydata(h)
+            line_u.set_ydata(u)
+            ax1.set_title(f'Time: {sim_time:.4f}s | Step: {step}')
+            
+            # 极简重绘 (比 plt.pause 更快)
+            fig.canvas.draw_idle()
+            fig.canvas.start_event_loop(0.001)
+            
+            last_render_time = time.time()
+            frame_count += 1
+            
+        print("[Visual] Closing window.")
+        plt.close(fig)
+
+# ==========================================
+# 第四部分：主控制器
+# ==========================================
 
 if __name__ == "__main__":
-    main()
+    # 配置参数
+    config = {
+        'g': 9.81,
+        'Xmax': 5.0,
+        'Tmax': 0.25,
+        'J': 400,
+        'dx': 5.0/400
+    }
+    
+    # 创建跨进程队列
+    # maxsize 很关键：
+    # 1. 如果你设得很小 (e.g., 10)，计算进程会因为队列满了而暂停，
+    #    等待显示进程画完。这实现了【完全同步的逐帧显示】，但计算速度会被拖慢到绘图速度。
+    # 2. 如果你设得很大 (e.g., 10000)，计算进程会飞快地跑，
+    #    显示进程在后面慢慢追。
+    queue = mp.Queue(maxsize=10000) 
+    
+    # 实例化进程
+    sim_process = SimulationProcess(queue, config)
+    vis_process = VisualizationProcess(queue, config)
+    
+    # 启动
+    print("Main: Starting processes...")
+    sim_process.start()
+    vis_process.start()
+    
+    # 等待结束
+    sim_process.join()
+    vis_process.join()
+    print("Main: All done.")

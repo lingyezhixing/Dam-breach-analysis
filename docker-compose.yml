@@ -1,0 +1,15 @@
+# docker-compose 文件版本
+version: '3.8'
+
+# 定义服务
+services:
+  # 我们的网页应用服务，可以任意命名（例如 webapp）
+  Dam-breach-analysis:
+    # 指示 docker-compose 在当前目录下寻找 Dockerfile 来构建镜像
+    build: .
+    # 定义端口映射
+    ports:
+      # 将主机的 33013 端口映射到容器内部的 80 端口
+      - "33013:80"
+    # 定义容器的重启策略
+    restart: always
