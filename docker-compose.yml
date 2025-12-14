@@ -1,15 +1,11 @@
 services:
-  # 服务名必须是小写
   dam-breach-analysis:
-    # 指定要构建的镜像的名称（也必须是小写）
     image: lingyehixing/dam-breach-analysis
-    # 指示 docker-compose 在当前目录下寻找 Dockerfile 来构建镜像
     build: .
-    # 定义端口映射
+    # 在这里添加下面这行，来指定容器的名称
+    container_name: dam-breach-analysis
     ports:
-      # 将主机的 33014 端口映射到容器内部的 80 端口
       - "33014:80"
-    # 定义容器的重启策略
     restart: always
     networks:
       - Academia
