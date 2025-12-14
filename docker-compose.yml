@@ -5,7 +5,7 @@ services:
     # 在这里添加下面这行，来指定容器的名称
     container_name: dam-breach-analysis
     ports:
-      - "33014:80"
+      - "35000:80"
     restart: always
     networks:
       - Academia
