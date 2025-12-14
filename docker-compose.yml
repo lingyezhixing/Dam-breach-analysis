@@ -2,10 +2,12 @@ services:
   dam-breach-analysis:
     image: lingyehixing/dam-breach-analysis
     build: .
-    # 在这里添加下面这行，来指定容器的名称
     container_name: dam-breach-analysis
     ports:
+      # 映射 HTTP 端口: 主机 33014 -> 容器 80
       - "35000:80"
+      # 映射 HTTPS 端口: 主机 33015 -> 容器 443
+      - "35001:443"
     restart: always
     networks:
       - Academia

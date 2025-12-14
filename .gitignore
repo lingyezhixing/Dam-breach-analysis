@@ -97,6 +97,9 @@ Dam-breach-analysis.code-workspace
 quick_stats.py
 QUICK_STATS_README.md
 
+dam-breach-analysis.lingyezhixing.top.crt
+dam-breach-analysis.lingyezhixing.top.key
+
 # 忽略AI上下文生成器
 generate_ai_context.py
 ai_context.md
